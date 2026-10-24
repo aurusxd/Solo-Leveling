@@ -33,8 +33,10 @@ Branch protection on `main`: require a pull request, require the `verify` status
    ```sh
    APP_DOMAIN=rpg.example.com
    POSTGRES_PASSWORD=<long random string>
+   BOT_TOKEN=<telegram bot token>
+   DEEPSEEK_API_KEY=<optional; empty selects FakeLlmClient>
    ```
 
-   App secrets (bot token and others from task 0.3) go into the same file. It never leaves the VPS.
+   The file never leaves the VPS. Compose sets `NODE_ENV` and `DATABASE_URL`. The app refuses to start in production without `BOT_TOKEN` or with `DEV_AUTH_BYPASS` or `ENTITLEMENTS_ALL` enabled (see `src/lib/server/config.ts`).
 
 4. Point the domain DNS at the VPS. Caddy obtains the TLS certificate on first start.
