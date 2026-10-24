@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: life_rpg_test
+          POSTGRES_USER: life_rpg
+          POSTGRES_PASSWORD: life_rpg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U life_rpg -d life_rpg_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://life_rpg:life_rpg@localhost:5432/life_rpg_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm check
+      - run: pnpm lint
+      # Migrations exist from task 0.4 on; this step activates as soon as drizzle/ has files.
+      - name: migrate ephemeral postgres
+        if: hashFiles('drizzle/**') != ''
+        run: pnpm db:migrate
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm test:e2e
+      - name: audit (informational)
+        continue-on-error: true
+        run: pnpm audit --prod
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  deploy:
+    name: deploy
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || 'life-rpg' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: ssh setup
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: deploy to vps
+        env:
+          TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$TARGET" "mkdir -p $DEPLOY_PATH"
+          scp -i ~/.ssh/id_deploy deploy/compose.yml deploy/Caddyfile deploy/deploy.sh "$TARGET:$DEPLOY_PATH/"
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/id_deploy "$TARGET" \
+            "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+          ssh -i ~/.ssh/id_deploy "$TARGET" \
+            "cd $DEPLOY_PATH && IMAGE='$IMAGE' IMAGE_TAG='${{ github.sha }}' sh deploy.sh"
+      - name: public healthcheck
+        env:
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: curl -fsS --retry 10 --retry-delay 3 --retry-all-errors "https://$APP_DOMAIN/api/health"
