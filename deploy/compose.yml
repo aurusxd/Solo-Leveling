@@ -29,6 +29,17 @@ services:
       postgres:
         condition: service_healthy
 
+  # One-off job run by deploy.sh before the app restarts; the profile keeps `up` from starting it.
+  migrate:
+    image: ${IMAGE:?IMAGE is set by the deploy job}:${IMAGE_TAG:-latest}
+    profiles: ['tools']
+    command: ['node', 'scripts/migrate.js']
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-life_rpg}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-life_rpg}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
