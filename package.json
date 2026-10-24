@@ -64,5 +64,8 @@
 		"ignoredBuiltDependencies": [
 			"lefthook"
 		]
+	},
+	"dependencies": {
+		"zod": "^4.6.7"
 	}
 }
