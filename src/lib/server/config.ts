@@ -1,4 +1,3 @@
-import * as privateEnv from '$app/env/private';
 import { z } from 'zod';
 
 // Unset and empty variables mean the same thing, so `KEY=` in .env behaves like a missing key.
@@ -81,8 +80,12 @@ export function loadConfig(source: Record<string, string | undefined>): AppConfi
 	};
 }
 
-/** Reads the variables declared in src/env.ts. */
-export function readConfig(): AppConfig {
+/**
+ * Reads the variables declared in src/env.ts. The SvelteKit module is imported lazily so scripts
+ * (seed, tests) can use loadConfig without the framework.
+ */
+export async function readConfig(): Promise<AppConfig> {
+	const privateEnv = await import('$app/env/private');
 	return loadConfig({
 		NODE_ENV: privateEnv.NODE_ENV,
 		DATABASE_URL: privateEnv.DATABASE_URL,
