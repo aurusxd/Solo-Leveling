@@ -8,7 +8,7 @@ export default defineConfig({
 	retries: process.env.CI ? 1 : 0,
 	use: { ...devices['Pixel 7'], trace: 'retain-on-failure' },
 	webServer: {
-		command: 'pnpm build && pnpm preview --port 4173 --strictPort',
+		command: 'pnpm build && node tests/e2e-server.js',
 		port: 4173,
 		reuseExistingServer: !process.env.CI
 	}
