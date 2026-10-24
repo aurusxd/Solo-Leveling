@@ -71,7 +71,7 @@ export default defineConfig(
 	},
 	{
 		files: ['src/lib/domain/**', 'src/lib/server/services/**'],
-		ignores: ['src/lib/domain/clock.ts'],
+		ignores: ['src/lib/domain/clock.ts', 'src/lib/domain/clock.test.ts'],
 		rules: { 'no-restricted-syntax': ['error', ...noWallClock] }
 	},
 	{
