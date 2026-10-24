@@ -20,6 +20,12 @@ const noWallClock = [
 	}
 ];
 
+// Environment is read in exactly one place, src/lib/server/config.ts.
+const privateEnvImport = {
+	group: ['$app/env/private'],
+	message: 'Read configuration through #lib/server/config.'
+};
+
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	{ ignores: ['drizzle/', 'research/', 'index.html'] },
@@ -49,6 +55,21 @@ export default defineConfig(
 		}
 	},
 	{
+		files: ['src/**'],
+		ignores: ['src/lib/server/config.ts'],
+		rules: {
+			'no-restricted-properties': [
+				'error',
+				{
+					object: 'process',
+					property: 'env',
+					message: 'Read configuration through #lib/server/config.'
+				}
+			],
+			'no-restricted-imports': ['error', { patterns: [privateEnvImport] }]
+		}
+	},
+	{
 		files: ['src/lib/domain/**', 'src/lib/server/services/**'],
 		ignores: ['src/lib/domain/clock.ts'],
 		rules: { 'no-restricted-syntax': ['error', ...noWallClock] }
@@ -62,7 +83,7 @@ export default defineConfig(
 				{
 					patterns: [
 						{
-							group: ['$app/*', '$env/*', '@sveltejs/*'],
+							group: ['$app/*', '@sveltejs/*'],
 							message: 'Domain must not depend on SvelteKit.'
 						},
 						{
@@ -91,6 +112,7 @@ export default defineConfig(
 				'error',
 				{
 					patterns: [
+						privateEnvImport,
 						{
 							group: ['drizzle-orm', 'drizzle-orm/*'],
 							message: 'Use a repository for database access.'
