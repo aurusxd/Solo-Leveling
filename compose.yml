@@ -1,0 +1,23 @@
+# Local development services. Production lives in deploy/compose.yml.
+# Host port 5433 avoids clashing with a natively installed Postgres on 5432.
+name: life-rpg-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: life_rpg
+      POSTGRES_USER: life_rpg
+      POSTGRES_PASSWORD: life_rpg
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U life_rpg -d life_rpg']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
