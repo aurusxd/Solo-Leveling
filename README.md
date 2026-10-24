@@ -12,6 +12,7 @@ Requires Node 24+ and pnpm 10.
 
 ```sh
 pnpm install
+cp .env.example .env
 pnpm test:e2e:install
 pnpm dev
 ```
