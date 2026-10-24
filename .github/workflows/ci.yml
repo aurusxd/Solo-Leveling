@@ -46,10 +46,11 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm check
       - run: pnpm lint
-      # Migrations exist from task 0.4 on; this step activates as soon as drizzle/ has files.
       - name: migrate ephemeral postgres
-        if: hashFiles('drizzle/**') != ''
         run: pnpm db:migrate
+      # Proves the seed runs without real secrets (skeleton checklist).
+      - name: seed
+        run: pnpm db:seed
       - run: pnpm test
       - run: pnpm build
       - run: pnpm test:e2e

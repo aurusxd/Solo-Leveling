@@ -12,10 +12,7 @@ compose() { docker compose -f compose.yml "$@"; }
 compose pull app
 compose up -d --wait postgres
 
-# The migrate service appears with the first migration (task 0.4); until then there is nothing to run.
-if compose config --services | grep -qx migrate; then
-	compose run --rm migrate
-fi
+compose --profile tools run --rm migrate
 
 compose up -d --remove-orphans
 
