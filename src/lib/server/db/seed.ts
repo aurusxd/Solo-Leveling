@@ -1,5 +1,5 @@
 import { inArray } from 'drizzle-orm';
-import type { Database } from './client.ts';
+import type { Database, Transaction as Tx } from './client.ts';
 import {
 	characters,
 	goals,
@@ -28,7 +28,6 @@ export const VETERAN_HISTORY_DAYS = 30;
  */
 export const VETERAN_WEAK_SPOT = 'strength';
 
-type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
 type SeedOptions = { now: Date; profiles?: readonly SeedProfile[] };
 export type SeedResult = Record<SeedProfile, { userId: string } | null>;
 
