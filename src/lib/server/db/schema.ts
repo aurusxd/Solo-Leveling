@@ -252,3 +252,19 @@ export const userSettings = pgTable('user_settings', {
 	cameraConsent: boolean('camera_consent').notNull().default(false),
 	cameraConsentAt: timestamp('camera_consent_at', { withTimezone: true })
 });
+
+// v4: only the token hash is stored; the token itself lives in the cookie (tech.md section 14).
+export const sessions = pgTable(
+	'sessions',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		userId: uuid('user_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		// sha256 (hex) of 32 random bytes
+		tokenHash: text('token_hash').notNull().unique(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull()
+	},
+	(t) => [index('sessions_user_idx').on(t.userId)]
+);
