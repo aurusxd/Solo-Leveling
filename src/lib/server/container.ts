@@ -7,9 +7,14 @@ import {
 	RulesConfigSchema,
 	type RulesConfig
 } from '#lib/domain/rules/RulesConfig.ts';
-import { PLAN_FEATURES, type AppConfig } from './config.ts';
+import { SessionManager } from './auth/SessionManager.ts';
+import { TelegramInitDataVerifier } from './auth/TelegramInitDataVerifier.ts';
+import { DEV_USER, PLAN_FEATURES, SECURITY, type AppConfig } from './config.ts';
 import { createDatabase, type DatabaseHandle } from './db/client.ts';
+import { FixedWindowRateLimiter } from './rateLimit.ts';
+import { SessionRepository } from './repositories/SessionRepository.ts';
 import { UserRepository } from './repositories/UserRepository.ts';
+import { AuthService } from './services/AuthService.ts';
 import { PlanEntitlements, type Entitlements } from './services/Entitlements.ts';
 
 export type Container = {
@@ -21,8 +26,14 @@ export type Container = {
 	database: DatabaseHandle;
 	repositories: {
 		users: UserRepository;
+		sessions: SessionRepository;
 	};
+	sessions: SessionManager;
+	auth: AuthService;
 	entitlements: Entitlements;
+	rateLimits: {
+		auth: FixedWindowRateLimiter;
+	};
 	close(): Promise<void>;
 };
 
@@ -41,6 +52,13 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 	const projector = new CharacterProjector(progression);
 	const database = overrides.database ?? createDatabase(config.databaseUrl);
 	const users = new UserRepository(database.db);
+	const sessionRepository = new SessionRepository(database.db);
+	const sessions = new SessionManager(sessionRepository, clock, {
+		ttlMs: SECURITY.sessionTtlMs,
+		production: config.env === 'production'
+	});
+	const verifier = config.botToken ? new TelegramInitDataVerifier(config.botToken, clock) : null;
+	const auth = new AuthService(users, sessions, verifier, DEV_USER);
 	const entitlements = new PlanEntitlements(users, PLAN_FEATURES, config.entitlementsAll);
 
 	return {
@@ -50,8 +68,11 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 		progression,
 		projector,
 		database,
-		repositories: { users },
+		repositories: { users, sessions: sessionRepository },
+		sessions,
+		auth,
 		entitlements,
+		rateLimits: { auth: new FixedWindowRateLimiter(clock, SECURITY.authRateLimit) },
 		close: () => database.close()
 	};
 }

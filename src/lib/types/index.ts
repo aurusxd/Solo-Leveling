@@ -227,3 +227,9 @@ export const FeatureKey = z.enum([
 	'camera'
 ]);
 export type FeatureKey = z.infer<typeof FeatureKey>;
+
+// Auth endpoints, tech.md section 8.1.
+export const TelegramAuthInput = z.object({ initData: z.string().min(1).max(4096) });
+export type TelegramAuthInput = z.infer<typeof TelegramAuthInput>;
+export const OkResponse = z.object({ ok: z.literal(true) });
+export type OkResponse = z.infer<typeof OkResponse>;
