@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { ZodError } from 'zod';
+import { ZodError, type z } from 'zod';
 import { DomainError } from '#lib/domain/errors.ts';
 import type { DomainErrorCode, ErrorBody } from '#lib/types/index.ts';
 
@@ -37,4 +37,64 @@ export function toErrorResponse(error: unknown): Response {
 		});
 	}
 	throw error;
+}
+
+/** Wraps an endpoint so expected failures become ErrorBody responses. */
+export function endpoint<E>(handler: (event: E) => Response | Promise<Response>) {
+	return async (event: E): Promise<Response> => {
+		try {
+			return await handler(event);
+		} catch (error) {
+			return toErrorResponse(error);
+		}
+	};
+}
+
+/** The signed-in user or UNAUTHENTICATED; every authenticated endpoint starts here. */
+export function requireUser(locals: App.Locals): { id: string } {
+	if (!locals.user) throw new DomainError('UNAUTHENTICATED', 'sign in first');
+	return locals.user;
+}
+
+/** Parses a JSON body against a contract schema; malformed JSON is a VALIDATION error too. */
+export async function readJson<S extends z.ZodType>(
+	request: Request,
+	schema: S
+): Promise<z.output<S>> {
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		throw new DomainError('VALIDATION', 'body must be JSON');
+	}
+	return schema.parse(body);
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * CSRF guard for every state-changing request (tech.md section 14): the Origin host must equal the
+ * Host the request was sent to, and the JSON API only accepts JSON. Hosts are compared rather than
+ * full origins because adapter-node no longer knows the public scheme at runtime (SvelteKit 3).
+ * Returns the error to send, or null to let the request on.
+ */
+export function rejectUnsafeRequest(request: Request, url: URL): DomainError | null {
+	if (SAFE_METHODS.has(request.method)) return null;
+	if (originHost(request.headers.get('origin')) !== url.host) {
+		return new DomainError('FORBIDDEN', 'cross-origin request');
+	}
+	const contentType = request.headers.get('content-type') ?? '';
+	if (url.pathname.startsWith('/api/') && !contentType.startsWith('application/json')) {
+		return new DomainError('VALIDATION', 'Content-Type must be application/json');
+	}
+	return null;
+}
+
+function originHost(origin: string | null): string | null {
+	if (!origin) return null;
+	try {
+		return new URL(origin).host;
+	} catch {
+		return null;
+	}
 }
