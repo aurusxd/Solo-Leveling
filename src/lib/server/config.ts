@@ -12,6 +12,21 @@ export const PLAN_FEATURES: PlanFeatures = {
 	pro: FeatureKey.options
 };
 
+/** Security parameters (tech.md section 14, v4). Not game rules, so they stay out of RulesConfig. */
+export const SECURITY = {
+	sessionTtlMs: 30 * 24 * 60 * 60 * 1000,
+	authRateLimit: { limit: 10, windowMs: 60_000 },
+	mutationRateLimit: { limit: 60, windowMs: 60_000 }
+} as const;
+
+/** The user DEV_AUTH_BYPASS signs in as (tech.md section 11, v4). */
+export const DEV_USER = {
+	telegramId: -100n,
+	firstName: 'Dev',
+	username: 'dev',
+	languageCode: 'ru'
+} as const;
+
 // Unset and empty variables mean the same thing, so `KEY=` in .env behaves like a missing key.
 const optionalString = z.preprocess((v) => (v === '' ? undefined : v), z.string().optional());
 

@@ -105,8 +105,9 @@ export default defineConfig(
 		}
 	},
 	{
-		// SQL lives only in repositories.
+		// SQL lives only in repositories. Tests may read tables to assert on stored state.
 		files: ['src/routes/**', 'src/lib/server/services/**', 'src/lib/client/**', 'src/lib/ui/**'],
+		ignores: ['**/*.test.ts'],
 		rules: {
 			'no-restricted-imports': [
 				'error',
