@@ -1,9 +1,14 @@
-import { inArray } from 'drizzle-orm';
-import type { Database } from './client.ts';
+import { eq, inArray } from 'drizzle-orm';
+import { idempotencyKey } from '#lib/domain/idempotency.ts';
+import { ProgressionEngine } from '#lib/domain/rules/ProgressionEngine.ts';
+import { DEFAULT_RULES, type RulesConfig } from '#lib/domain/rules/RulesConfig.ts';
+import { Penalty, QuestCriteria, Reward } from '#lib/types/index.ts';
+import type { Database, Transaction as Tx } from './client.ts';
 import {
 	characters,
 	goals,
 	onboardingProfiles,
+	progressEvents,
 	quests,
 	shopItems,
 	userSettings,
@@ -28,8 +33,7 @@ export const VETERAN_HISTORY_DAYS = 30;
  */
 export const VETERAN_WEAK_SPOT = 'strength';
 
-type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
-type SeedOptions = { now: Date; profiles?: readonly SeedProfile[] };
+type SeedOptions = { now: Date; profiles?: readonly SeedProfile[]; rules?: RulesConfig };
 export type SeedResult = Record<SeedProfile, { userId: string } | null>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -38,12 +42,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * Recreates the requested seed users from scratch. Re-running replaces them and leaves every other
  * user, including seed profiles that were not requested, alone.
  *
- * The veteran history covers quests only. Its progress_events (and the matching characters cache)
- * come with task 0.6, where ProgressionEngine derives them, so the seed does not duplicate the
- * progression rules.
+ * The veteran ledger is derived from its resolved quests by ProgressionEngine, so the seed never
+ * restates progression rules and its characters cache equals the projection of its ledger.
  */
 export async function seedDatabase(db: Database, options: SeedOptions): Promise<SeedResult> {
 	const profiles = options.profiles ?? SEED_PROFILES;
+	const engine = new ProgressionEngine(options.rules ?? DEFAULT_RULES);
 	return db.transaction(async (tx) => {
 		await tx.delete(users).where(
 			inArray(
@@ -53,7 +57,7 @@ export async function seedDatabase(db: Database, options: SeedOptions): Promise<
 		);
 		return {
 			newbie: profiles.includes('newbie') ? await seedNewbie(tx, options.now) : null,
-			veteran: profiles.includes('veteran') ? await seedVeteran(tx, options.now) : null
+			veteran: profiles.includes('veteran') ? await seedVeteran(tx, options.now, engine) : null
 		};
 	});
 }
@@ -160,7 +164,11 @@ const VETERAN_GOALS = [
 	{ stat: 'discipline', title: 'Keep focus', weeklyTargetPoints: 5, priority: 1 }
 ] as const;
 
-async function seedVeteran(tx: Tx, now: Date): Promise<{ userId: string }> {
+async function seedVeteran(
+	tx: Tx,
+	now: Date,
+	engine: ProgressionEngine
+): Promise<{ userId: string }> {
 	const userId = await createUser(tx, 'veteran', { firstName: 'Veteran', plan: 'pro' });
 	const today = startOfUtcDay(now);
 	const calibrationStartedAt = new Date(today.getTime() - (VETERAN_HISTORY_DAYS + 7) * DAY_MS);
@@ -203,8 +211,62 @@ async function seedVeteran(tx: Tx, now: Date): Promise<{ userId: string }> {
 			});
 		}
 	}
-	await tx.insert(quests).values(history);
+	const resolved = await tx.insert(quests).values(history).returning();
+	await writeLedger(tx, userId, resolved, engine, now);
 	return { userId };
+}
+
+/** Replays resolved quests in order through the engine, then caches the resulting character. */
+async function writeLedger(
+	tx: Tx,
+	userId: string,
+	resolved: (typeof quests.$inferSelect)[],
+	engine: ProgressionEngine,
+	now: Date
+): Promise<void> {
+	const ordered = [...resolved].sort((a, b) => a.resolvedAt!.getTime() - b.resolvedAt!.getTime());
+	let state = engine.initialState();
+	const events: (typeof progressEvents.$inferInsert)[] = [];
+
+	for (const q of ordered) {
+		const quest = {
+			reward: Reward.parse(q.reward),
+			penalty: q.penalty == null ? null : Penalty.parse(q.penalty),
+			deadlineAt: q.deadlineAt
+		};
+		const completed = q.status === 'completed';
+		const delta = completed
+			? engine.questCompleted(quest, q.resolvedAt!)
+			: engine.questFailed(state, quest);
+		state = engine.apply(state, delta);
+		// Rep quests are confirmed by the camera; manual ones are the user's word.
+		const measured = QuestCriteria.parse(q.criteria).kind === 'reps';
+		events.push({
+			userId,
+			idempotencyKey: completed
+				? idempotencyKey.questCompleted(q.id)
+				: idempotencyKey.questFailed(q.id),
+			kind: completed ? 'quest_completed' : 'quest_failed',
+			source: completed ? (measured ? 'cv' : 'manual') : 'system',
+			verification: completed ? (measured ? 'measured' : 'self_reported') : 'system',
+			...delta,
+			refType: 'quest',
+			refId: q.id,
+			createdAt: q.resolvedAt!
+		});
+	}
+
+	await tx.insert(progressEvents).values(events);
+	await tx
+		.update(characters)
+		.set({
+			level: state.level,
+			xpTotal: state.xpTotal,
+			gold: state.gold,
+			statPoints: state.statPoints,
+			updatedAt: now
+		})
+		.where(eq(characters.userId, userId));
 }
 
 function startOfUtcDay(d: Date): Date {

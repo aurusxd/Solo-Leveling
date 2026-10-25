@@ -1,7 +1,8 @@
 # tech.md: Life RPG
 
-**Версия ядра: v3**
+**Версия ядра: v4**
 **Changelog**
+- v4: контракты авторизации для Stage 0.7. Таблица `sessions` (хэш токена в БД, срок 30 дней, cookie `__Host-sid`/`sid`), механика `DEV_AUTH_BYPASS` (hooks входит под dev-пользователем `telegram_id = -100`), числа rate limit (`/api/auth/*` 10 в минуту на IP, мутации 60 в минуту на пользователя). Схема расширена append-only (BREAKING нет).
 - v3: LLM-провайдер заменён с Claude API на DeepSeek API (`DeepSeekLlmClient`), кэш пояснений и шаблонный фолбэк. Контракты `LlmClient` не менялись.
 - v2: универсальная механика (анкета и калибровка, планировщик дня, анализатор слабых мест, адаптивная сложность, боссы, архетипы), планы доступа (Entitlements), модули источников данных. Слайсы S10-S16. Схема и типы расширены append-only (BREAKING нет).
 - v1: исходное ядро. Стадия 0 (каркас) + вертикальные слайсы S1-S9.
@@ -308,6 +309,18 @@ export const userSettings = pgTable('user_settings', {
 - `source:<sourceKey>:<externalId>` (события внешних источников)
 
 Таблица `data_source_connections` дописывается в S16 с бампом версии. Значения `event_source` ('github' и др.) добавляются append-only при реализации модуля.
+
+Сессии (v4). Хранится только хэш токена, сам токен живёт в cookie (раздел 14):
+
+```ts
+export const sessions = pgTable('sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),   // sha256(hex) от 32 случайных байт
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, (t) => [index('sessions_user_idx').on(t.userId)]);
+```
 
 ## 7. Общие типы (контракты, zod v4)
 
@@ -680,6 +693,8 @@ interface Entitlements {
 - `TelegramBridge` (`lib/client/telegram.ts`): `ready()`, `expand()`, `initData`, тема, haptics, закрытие. Вне Telegram работает заглушка (веб-режим).
 - Вход: клиент шлёт `initData` на `/api/auth/telegram`, сервер создаёт или находит пользователя по `telegramId`.
 - Dev-режим: `DEV_AUTH_BYPASS=true` создаёт тестового пользователя. Приложение **отказывается стартовать**, если `NODE_ENV=production` и bypass включён.
+- Механика bypass (v4): при `DEV_AUTH_BYPASS=true` и отсутствии валидной сессии `hooks.server.ts` входит под dev-пользователем (`telegram_id = -100`, `firstName = "Dev"`) и создаёт его при первом входе так же, как обычного пользователя (персонаж, настройки, онбординг в фазе `questionnaire`). Новых эндпоинтов нет. E2E запускается с bypass.
+- Неавторизованный запрос к страницам `(app)` гард ведёт на `/login` (`(public)`), API отвечает `UNAUTHENTICATED` 401.
 
 ## 12. Компьютерное зрение
 
@@ -727,6 +742,8 @@ interface Entitlements {
 - **Валидация:** zod на каждом входе (body, query, params). Лимиты длин и диапазонов заданы схемами.
 - **CSRF/Origin:** в `hooks.server.ts` для всех не-GET проверяется `Origin`/`Host`. JSON API требует `Content-Type: application/json`.
 - **Rate limit:** на `/api/auth/*` и мутации (in-memory на процесс, достаточно для одного инстанса).
+- **Сессия, детали (v4):** токен = 32 случайных байта (base64url) в cookie, в таблице `sessions` хранится `sha256` от токена. Срок 30 дней, Mini App при каждом открытии заново шлёт `initData`. Cookie `__Host-sid` в production и `sid` вне production, `HttpOnly; Secure; SameSite=Lax; Path=/`. Logout удаляет строку сессии и cookie. Просроченная сессия равна отсутствующей.
+- **Rate limit, числа (v4):** fixed window в `hooks.server.ts`. `/api/auth/*`: 10 запросов в минуту на IP. Мутации: 60 запросов в минуту на пользователя (включается с первой мутацией в S2). Превышение даёт `RATE_LIMITED` 429. Числа живут в `config.ts`, не в `RulesConfig` (это не игровые параметры).
 - **Заголовки:** CSP (self, wss/https для API, `mediastream`/`blob` для камеры, `cdn` для wasm MediaPipe закреплён явно), `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy: camera=(self)`. Frame-ancestors разрешает Telegram.
 - **Секреты:** только env, читаются в `config.ts`, не логируются, не попадают на клиент (только `PUBLIC_*`). `.env` в `.gitignore`, `.env.example` без значений.
 - **SQL:** только Drizzle (параметризация), сырой SQL запрещён без ревью.

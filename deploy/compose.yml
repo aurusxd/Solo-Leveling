@@ -23,7 +23,6 @@ services:
     environment:
       NODE_ENV: production
       PORT: '3000'
-      ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN in .env}
       DATABASE_URL: postgres://${POSTGRES_USER:-life_rpg}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-life_rpg}
     depends_on:
       postgres:

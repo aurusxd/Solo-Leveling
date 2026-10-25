@@ -1,5 +1,8 @@
 import { randomInt } from 'node:crypto';
-import { and, count, eq } from 'drizzle-orm';
+import { and, asc, count, eq } from 'drizzle-orm';
+import { CharacterProjector } from '#lib/domain/character/CharacterProjector.ts';
+import { ProgressionEngine } from '#lib/domain/rules/ProgressionEngine.ts';
+import { DEFAULT_RULES } from '#lib/domain/rules/RulesConfig.ts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	characters,
@@ -118,6 +121,41 @@ describe.skipIf(!handle)('seedDatabase (real Postgres)', () => {
 			const rates = ['strength', 'intelligence', 'discipline'].map((s) => [s, rate(s)] as const);
 			const lowest = rates.reduce((min, r) => (r[1] < min[1] ? r : min));
 			expect(lowest[0]).toBe(VETERAN_WEAK_SPOT);
+		});
+
+		it('has one ledger event per resolved quest, keyed by the quest', async () => {
+			const userId = userIdOf('veteran');
+			const history = await db.select().from(quests).where(eq(quests.userId, userId));
+			const events = await db
+				.select()
+				.from(progressEvents)
+				.where(eq(progressEvents.userId, userId));
+
+			expect(events).toHaveLength(history.length);
+			for (const q of history) {
+				const key = `${q.status === 'completed' ? 'quest-completed' : 'quest-failed'}:${q.id}`;
+				const event = events.find((e) => e.idempotencyKey === key);
+				expect(event?.refId).toBe(q.id);
+				if (q.status === 'failed') expect(event?.goldDelta).toBe(0);
+			}
+		});
+
+		it('caches exactly the projection of its ledger', async () => {
+			const userId = userIdOf('veteran');
+			const ledger = await db
+				.select()
+				.from(progressEvents)
+				.where(eq(progressEvents.userId, userId))
+				.orderBy(asc(progressEvents.createdAt));
+			const [cached] = await db.select().from(characters).where(eq(characters.userId, userId));
+			const projected = new CharacterProjector(new ProgressionEngine(DEFAULT_RULES)).project(
+				ledger
+			);
+
+			expect(cached).toMatchObject(projected);
+			expect(projected.gold).toBe(ledger.reduce((n, e) => n + e.goldDelta, 0));
+			expect(projected.xpTotal).toBe(ledger.reduce((n, e) => n + e.xpDelta, 0));
+			expect(projected.level).toBeGreaterThan(1);
 		});
 	});
 
