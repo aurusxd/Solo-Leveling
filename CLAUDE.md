@@ -2,7 +2,7 @@
 
 Проект: Life RPG, Telegram Mini App в духе Solo Leveling. Реальные задачи и привычки превращаются в уровни, XP, характеристики, задания, магазин. Прогресс подтверждается вручную и через камеру (MediaPipe).
 
-Полная спецификация: `tech.md` (ядро v3), единственный источник истины. Этот файл содержит выжимку, чтобы сессия работала без загрузки всего `tech.md`. Для деталей читай нужный раздел `tech.md` по номеру. При расхождении прав `tech.md`.
+Полная спецификация: `tech.md` (ядро v4), единственный источник истины. Этот файл содержит выжимку, чтобы сессия работала без загрузки всего `tech.md`. Для деталей читай нужный раздел `tech.md` по номеру. При расхождении прав `tech.md`.
 
 ## Правила работы
 
@@ -64,8 +64,9 @@ SvelteKit fullstack (Svelte 5), TypeScript strict, `adapter-node`, Tailwind v4 +
 ## Безопасность
 
 - Telegram auth: HMAC-SHA256 над `initData` (ключ из `WebAppData` + `BOT_TOKEN`), constant-time сравнение, `auth_date` не старше 1 часа. Dev bypass `DEV_AUTH_BYPASS` не даёт стартовать в production.
-- Сессия: cookie `HttpOnly; Secure; SameSite=Lax`, в проде префикс `__Host-`.
-- zod на каждом входе (body, query, params). Проверка `Origin` на не-GET. Rate limit на `/api/auth/*` и мутации. CSP и `Permissions-Policy: camera=(self)`.
+- Сессия: cookie `HttpOnly; Secure; SameSite=Lax`, в проде префикс `__Host-`. Токен 32 байта в cookie `__Host-sid` (вне prod `sid`), в таблице `sessions` только `sha256` токена, срок 30 дней, logout удаляет строку.
+- `DEV_AUTH_BYPASS=true`: при отсутствии сессии hooks входят под dev-пользователем `telegram_id = -100` (создаётся как обычный). Гард `(app)` ведёт на `/login`, API отвечает 401.
+- zod на каждом входе (body, query, params). Проверка `Origin` на не-GET. Rate limit (in-memory fixed window, числа в `config.ts`): `/api/auth/*` 10 в минуту на IP, мутации 60 в минуту на пользователя, превышение `RATE_LIMITED`. CSP и `Permissions-Policy: camera=(self)`.
 - Секреты только через `config.ts`, не логировать, не отдавать на клиент. Логи без PII (initData, токены, тексты заданий).
 - Для каждого агрегата тест изоляции: пользователь B не видит данные A.
 
